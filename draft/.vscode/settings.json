@@ -1,0 +1,8 @@
+{
+  "files.associations": {
+    ".eslintrc": "json",
+    "*.json": "json",
+    "*.tcss": "css",
+    "chrono": "cpp"
+  }
+}
