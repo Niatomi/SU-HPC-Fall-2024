@@ -6,7 +6,7 @@
 #define R_MAX 100
 
 #define MIN_SIZE 10
-#define MAX_SIZE 1000000
+#define MAX_SIZE 1000000000
 #define SIZE_STEP 10
 
 // Vector
