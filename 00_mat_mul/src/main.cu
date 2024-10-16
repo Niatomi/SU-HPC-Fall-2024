@@ -7,8 +7,6 @@
 
 #define BLOCK_SIZE 32
 
-#define ERROR_DELTA 1
-
 struct FloatMatrix
 {
     float **contents; // [y][x]
@@ -140,7 +138,7 @@ bool equals(FloatMatrix *matrix, float *result)
 {
     for (int i = 0; i < matrix->size; i++)
         for (int j = 0; j < matrix->size; j++)
-            if (abs(result[i * matrix->size + j] - matrix->contents[i][j]) > ERROR_DELTA)
+            if (abs(result[i * matrix->size + j] - matrix->contents[i][j]) > 0.000001)
                 return false;
     return true;
 }
@@ -153,6 +151,7 @@ int main()
     t.add("Native C");
     t.add("CUDA CPU");
     t.add("CUDA GPU");
+    t.add("CPU/GPU");
     t.endOfRow();
 
     clock_t start, end;
@@ -186,7 +185,11 @@ int main()
 
         if (!equals(mat3, result))
         {
-            return -1;
+            printf("Data is not equal\n");
+        }
+        else
+        {
+            printf("Data is equal\n");
         }
 
         float *d_A, *d_B, *d_C;
@@ -204,16 +207,20 @@ int main()
         matmul_gpu<<<gridDim, blockDim>>>(d_A, d_B, d_C, size);
         cudaDeviceSynchronize();
         end = clock();
-        time_taken = double(end - start) / double(CLOCKS_PER_SEC);
-        t.add(std::to_string(time_taken) + " sec");
+
+        double time_taken_1 = double(end - start) / double(CLOCKS_PER_SEC);
+        t.add(std::to_string(time_taken_1));
+        t.add(std::to_string(time_taken / time_taken_1));
 
         cudaMemcpy(result, d_C, f1msize, cudaMemcpyDeviceToHost);
         if (!equals(mat3, result))
         {
-            return -1;
+            printf("Data is not equal\n");
         }
-
-        t.endOfRow();
+        else
+        {
+            printf("Data is equal\n");
+        }
 
         free_1dm_mat(f1dm1);
         free_1dm_mat(f1dm2);
@@ -226,6 +233,8 @@ int main()
         cudaFree(d_A);
         cudaFree(d_B);
         cudaFree(d_C);
+
+        t.endOfRow();
     }
 
     std::cout << t;
