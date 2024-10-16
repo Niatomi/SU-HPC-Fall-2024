@@ -51,7 +51,7 @@ void free_matrix(FloatMatrix *matrix)
     free((void *)matrix);
 }
 
-float randomFloat()
+float random_float()
 {
     return (R_MAX - R_MIN) * ((((float)rand()) / (float)RAND_MAX)) + R_MIN;
 }
@@ -60,7 +60,7 @@ void rand_matrix(FloatMatrix *matrix)
 {
     for (int i = 0; i < matrix->size; i++)
         for (int j = 0; j < matrix->size; j++)
-            matrix->contents[i][j] = randomFloat();
+            matrix->contents[i][j] = random_float();
 }
 Float1DMatrix *init_1dm_mat(int size)
 {
@@ -109,7 +109,7 @@ void matmul_cpu(float *A, float *B, float *C, int m)
     {
         for (int j = 0; j < m; j++)
         {
-            float sum = 10.0f;
+            float sum = 0.0f;
             for (int l = 0; l < m; l++)
             {
                 sum += A[i * m + l] * B[l * m + j];
