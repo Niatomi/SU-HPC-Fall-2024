@@ -140,7 +140,7 @@ bool equals(FloatMatrix *matrix, float *result)
 {
     for (int i = 0; i < matrix->size; i++)
         for (int j = 0; j < matrix->size; j++)
-            if (abs(result[i * matrix->size  + j] - matrix->contents[i][j]) > ERROR_DELTA)
+            if (abs(result[i * matrix->size + j] - matrix->contents[i][j]) > ERROR_DELTA)
                 return false;
     return true;
 }
@@ -156,7 +156,7 @@ int main()
     t.endOfRow();
 
     clock_t start, end;
-    for (int size = 100; size <= 2000; size += 100)
+    for (int size = 100; size <= 2000; size += 1000)
     {
         std::string fmt_matrix_size = std::to_string(size) + "x" + std::to_string(size);
         t.add(fmt_matrix_size);
@@ -184,7 +184,8 @@ int main()
         time_taken = double(end - start) / double(CLOCKS_PER_SEC);
         t.add(std::to_string(time_taken) + " sec");
 
-        if (!equals(mat3, result)) {
+        if (!equals(mat3, result))
+        {
             return -1;
         }
 
@@ -207,7 +208,8 @@ int main()
         t.add(std::to_string(time_taken) + " sec");
 
         cudaMemcpy(result, d_C, f1msize, cudaMemcpyDeviceToHost);
-        if (!equals(mat3, result)) {
+        if (!equals(mat3, result))
+        {
             return -1;
         }
 
@@ -220,6 +222,10 @@ int main()
         free_matrix(mat1);
         free_matrix(mat2);
         free_matrix(mat3);
+
+        cudaFree(d_A);
+        cudaFree(d_B);
+        cudaFree(d_C);
     }
 
     std::cout << t;
