@@ -156,7 +156,7 @@ int main()
     t.endOfRow();
 
     clock_t start, end;
-    for (int size = 100; size <= 2000; size += 1000)
+    for (int size = 100; size <= 2000; size += 100)
     {
         std::string fmt_matrix_size = std::to_string(size) + "x" + std::to_string(size);
         t.add(fmt_matrix_size);
@@ -197,8 +197,8 @@ int main()
         cudaMemcpy(d_A, f1dm1->contents, f1msize, cudaMemcpyHostToDevice);
         cudaMemcpy(d_B, f1dm2->contents, f1msize, cudaMemcpyHostToDevice);
 
-        dim3 blockDim(BLOCK_SIZE, BLOCK_SIZE);
-        dim3 gridDim((size + BLOCK_SIZE - 1) / BLOCK_SIZE, (size + BLOCK_SIZE - 1) / BLOCK_SIZE);
+        dim3 blockDim(16, 16);
+        dim3 gridDim(32, 32);
 
         start = clock();
         matmul_gpu<<<gridDim, blockDim>>>(d_A, d_B, d_C, size);
