@@ -2,7 +2,7 @@ ROOT = ${CWD}
 
 BIN_NAME = vector_sum
 NVCC = nvcc
-BUILD_FLAGS = 
+BUILD_FLAGS = -rdc=true
 
 run: build
 	@./out/${BIN_NAME}
