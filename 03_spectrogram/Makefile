@@ -1,6 +1,6 @@
 ROOT = ${CWD}
 
-BIN_NAME = mat_mul
+BIN_NAME = spectrogram
 NVCC = nvcc
 BUILD_FLAGS = 
 
