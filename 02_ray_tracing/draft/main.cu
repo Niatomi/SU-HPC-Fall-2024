@@ -132,16 +132,15 @@ glm::vec4 trace_ray(ray ray, std::vector<sphere> spheres, int depth, int prev_sp
     glm::vec3 light_source = glm::normalize(glm::vec3(-1.0f, -0.5f, 1));
     float light_intensity = glm::max(glm::dot(norm, -light_source), 0.0f); // == cos(angle)
 
-    pixel_color.x *= closest_sphere.albedo.x;
-    pixel_color.y *= closest_sphere.albedo.y;
-    pixel_color.z *= closest_sphere.albedo.z;
-
-    pixel_color *= light_intensity;
+    pixel_color.x = closest_sphere.albedo.x;
+    pixel_color.y = closest_sphere.albedo.y;
+    pixel_color.z = closest_sphere.albedo.z;
 
     // ray.Origin = payload.WorldPosition + payload.WorldNormal * 0.0001f;
     // ray.Direction = glm::reflect(ray.Direction, payload.WorldNormal);
     ray.origin = closest_sphere.position + norm;
     ray.direction = glm::reflect(ray.direction, norm) + 0.1f * 0.5f;
+    ray.direction = spheres[0].position;
 
     return pixel_color + trace_ray(ray, spheres, depth + 1, closest_sphere_idx) * 0.3f;
 }
@@ -183,11 +182,11 @@ int main()
     sph.albedo = glm::vec3(0.0f, 0.0f, 1.0f);
     spheres.push_back(sph);
 
-    // // floot
-    // sph.radius = 1.0f;
-    // sph.position = glm::vec3{0, 0, 5};
-    // sph.albedo = glm::vec3(1.0f, 0.0f, 0.0f);
-    // spheres.push_back(sph);
+    // floot
+    sph.radius = 1.0f;
+    sph.position = glm::vec3{0, 0, 5};
+    sph.albedo = glm::vec3(1.0f, 0.0f, 0.0f);
+    spheres.push_back(sph);
 
     for (int y = 0; y < IMAGE_HEIGHT; y++)
     {
