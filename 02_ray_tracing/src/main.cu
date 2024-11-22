@@ -1,18 +1,17 @@
-#include "image.cpp"
-#include "sphere.cpp"
-#include "vec3.cpp"
-#include "ray.cpp"
-#include "camera.cpp"
-#include "world.cpp"
-
-#include "cuda_utils.h"
-
-#include <stdio.h>
+#include <iostream>
+#include <time.h>
 #include <float.h>
-#include <math.h>
-
-#include "thrust/device_vector.h"
 #include <curand_kernel.h>
+#include "vec3.h"
+#include "ray.h"
+#include "sphere.h"
+#include "hitable_list.h"
+#include "camera.h"
+#include "material.h"
+#include "cuda_utils.h"
+#include "image.h"
+#include "scene.h"
+#include "light.h"
 
 // Implement a simple ray tracing algorithm without refraction rays using GPU.
 //
@@ -55,168 +54,232 @@ for each pixel
     pixel color = illumination tone mapped to display range
 }
 */
+#define SAMPLES_AMMOUNT 100
 
-// #define PICTURES_AMMOUNT 10
-// #define MIN_WIDTH 800
-// #define MAX_WIDTH 1920
-// #define REFLECT_RECURESION_LIMIT 5
+#define MAX_RESOLUTION 1920
+#define PICTURES_AMMOUNT 5
 
-#define IMAGE_WIDTH 1920
-#define IMAGE_HEIGHT 1080
+#define SKY vec3(0.6f, 0.7f, 0.8f)
 
-#define CHANNELS 3
 #define RED 0
 #define GREEN 1
 #define BLUE 2
 
-#define SKY vec3(0.6f, 0.7f, 0.8f)
-// #define SKY vec3(0.0f);
+#define MAX_RECURSION_DEPTH 5
 
-__device__ color3 trace_ray(ray r, world **w, int depth)
+__device__ vec3 color(const ray &r, scene *scene, curandState *local_rand_state, int depth)
 {
-    if ((*w)->spheres_count == 0 || depth == 5)
-        return SKY;
+    vec3 illumination = vec3(1.0, 1.0, 1.0);
+    if (depth == MAX_RECURSION_DEPTH)
+        return illumination;
 
-    int sphere_idx = -1;
-    float min_t = FLT_MAX;
-
-    for (int i = 0; i < (*w)->spheres_count; i++)
+    hit_record rec;
+    if (scene->spheres->hit(r, 0.001f, FLT_MAX, rec))
     {
-        sphere *sph = (*w)->spheres[i];
-        vec3 oc = r.origin() - sph->position;
-        float a = dot(r.direction(), r.direction());
-        float b = 2.0f * dot(oc, r.direction());
-        float c = dot(oc, oc) - sph->radius * sph->radius;
-        float discr = b * b - 4.0f * a * c;
-        if (discr < 0)
-            continue;
-        float t = (b - sqrt(discr)) / (2.0f * a);
-        if (t < min_t && t > 0.0f)
+        ray scattered;
+        vec3 attenuation;
+
+        hit_record light_rec;
+        float light_intensity = 0.0f;
+        for (int i = 0; i < scene->lights->list_size; i++)
         {
-            min_t = t;
-            sphere_idx = i;
+            light *l = (light *)scene->lights->list[i];
+            light_intensity += l->intensity(r);
+            if (light_intensity > 1.0f)
+            {
+                light_intensity = 1.0f;
+            }
+        }
+
+        if (rec.mat_ptr->scatter(r, rec, attenuation, scattered, local_rand_state))
+        {
+            illumination *= attenuation * light_intensity;
+            illumination *= color(scattered, scene, local_rand_state, depth + 1);
         }
     }
-
-    if (sphere_idx == -1)
-        return SKY;
-
-    sphere *closest_sph = (*w)->spheres[sphere_idx];
-    vec3 origin = r.origin() - closest_sph->position;
-    vec3 hit_point = origin + r.direction() * min_t;
-    vec3 point_norm = hit_point.normilize();
-
-    color3 illumintaion = closest_sph->albedo;
-    for (int i = 0; i < (*w)->light_count; i++)
+    else
     {
-        light *light = (*w)->light[i];
-        vec3 norm_light = light->normilize();
-        float light_intensity = max(dot(hit_point, -norm_light), 0.0f);
-        illumintaion *= light_intensity;
+        vec3 unit_direction = unit_vector(r.direction());
+        float t = (0.5f * unit_direction.y()) + 0.5f;
+        vec3 c = (1.0f - t) * vec3(1.0, 1.0, 1.0) + t * SKY;
+        illumination *= c;
     }
 
-    vec3 refelcted = reflect(r.direction(), point_norm);
-    ray reflected(hit_point, point_norm);
-    return illumintaion + trace_ray(reflected, w, depth + 1) * 0.3f;
+    return illumination;
 }
 
-__global__ void pixel_color(float *pixels, world **w)
+__global__ void render_init(int max_x, int max_y, curandState *rand_state)
 {
-    if (blockIdx.y < IMAGE_HEIGHT && blockIdx.x < IMAGE_WIDTH)
-    {
-        int color_channel = threadIdx.x;
-        float x = blockIdx.x;
-        float y = blockIdx.y;
-
-        ray r = (*w)->cam->get_ray(x, y);
-        vec3 color = trace_ray(r, w, 0);
-
-        int pixel_pos = (gridDim.x * blockIdx.y + blockIdx.x);
-        int pR = pixel_pos + (RED * gridDim.x * gridDim.y);
-        int pG = pixel_pos + (GREEN * gridDim.x * gridDim.y);
-        int pB = pixel_pos + (BLUE * gridDim.x * gridDim.y);
-
-        pixels[pR] = color.e[RED];
-        pixels[pG] = color.e[GREEN];
-        pixels[pB] = color.e[BLUE];
-    }
+    int i = threadIdx.x + blockIdx.x * blockDim.x;
+    int j = threadIdx.y + blockIdx.y * blockDim.y;
+    if ((i >= max_x) || (j >= max_y))
+        return;
+    int pixel_pos = j * max_x + i;
+    curand_init(52, pixel_pos, 0, &rand_state[pixel_pos]);
 }
 
-__global__ void world_init(
-    sphere **d_spheres, int spheres_ammount,
-    light **d_light, int light_ammount,
-    world **d_world,
-    camera **d_camera)
+__global__ void render(vec3 *fb, int image_width, int image_height, int ns, scene **scene, curandState *rand_state)
+{
+    int i = threadIdx.x + blockIdx.x * blockDim.x;
+    int j = threadIdx.y + blockIdx.y * blockDim.y;
+    if ((i >= image_width) || (j >= image_height))
+        return;
+    int pixel_pos = j * image_width + i;
+    curandState local_rand_state = rand_state[pixel_pos];
+
+    vec3 col(0, 0, 0);
+    for (int s = 0; s < ns; s++)
+    {
+        float u = float(i + curand_uniform(&local_rand_state)) / float(image_width);
+        float v = float(j + curand_uniform(&local_rand_state)) / float(image_height);
+        ray r = (*scene)->cam->get_ray(u, v);
+        col += color(r, *scene, &local_rand_state, 0);
+    }
+    rand_state[pixel_pos] = local_rand_state;
+    col /= float(ns);
+    col[RED] = sqrt(col[RED]);
+    col[GREEN] = sqrt(col[GREEN]);
+    col[BLUE] = sqrt(col[BLUE]);
+    fb[pixel_pos] = col;
+}
+
+__global__ void create_world(
+    hitable **d_spheres,
+    hitable **d_lights,
+    camera **d_camera,
+    scene **d_scene)
 {
     if (threadIdx.x == 0 && blockIdx.x == 0)
     {
-        d_spheres[0] = new sphere(0.5f, vec3(-1.0f, 0.0f, 0.0f), color3(0.5f, 0.0f, 0.0f));
-        d_spheres[1] = new sphere(0.5f, vec3(0.5f, 0.0f, 0.0f), color3(0.0f, 0.5f, 0.0f));
-        d_spheres[2] = new sphere(0.5f, vec3(1.5f, 0.0f, 0.6f), color3(0.5f, 0.0f, 0.5));
-        // d_spheres[3] = new sphere(100.0f, vec3(0.0f, -50.0f, 0.0f), color3(1.0f));
-        d_light[0] = new light(5.0f);
-        *d_camera = new camera();
-        *d_world = new world(
-            d_spheres, spheres_ammount,
-            d_light, light_ammount,
-            *d_camera);
+        d_spheres[0] = new sphere(
+            vec3(0, 0, 0), 0.5,
+            new lambertian(vec3(0.1, 0.2, 0.5)));
+        d_spheres[1] = new sphere(
+            vec3(0, -100.5, -1), 100,
+            new lambertian(vec3(0.2, 0.2, 0.2)));
+        d_spheres[2] = new sphere(
+            vec3(0, 0, -1.), 0.5,
+            new metal(vec3(0.8, 0.6, 0.2), 0.0));
+        d_spheres[3] = new sphere(
+            vec3(-1.02, 0, -1.02), 0.1,
+            new metal(vec3(0.2, 0.6, 0.6), 0.0));
+        d_spheres[4] = new sphere(
+            vec3(0, 0, -2), 0.45,
+            new metal(vec3(0.8, 0.6, 0.2), 0.0));
+        d_spheres[5] = new sphere(
+            vec3(-1, 0, 0), 0.45,
+            new metal(vec3(1.0f), 0.0));
+
+        d_lights[0] = new light(vec3(1.0f, 4.0f, 0.0f));
+        d_lights[1] = new light(vec3(0.0f, 2.0f, 0.0f));
+
+        *d_camera = new camera(
+            vec3(-3.0f, 2.0f, 0),
+            vec3(0, 0, 0),
+            vec3(0, 1, 0),
+            45.0f,
+            16.0f / 9.0f);
+
+        *d_scene = new scene();
+        (*d_scene)->cam = *d_camera;
+        (*d_scene)->spheres = new hitable_list(d_spheres, 6);
+        (*d_scene)->lights = new hitable_list(d_lights, 2);
     }
+}
+
+__global__ void free_world(scene **sc)
+{
+
+    for (int i = 0; i < (*sc)->spheres->list_size; i++)
+    {
+        delete ((sphere *)(*sc)->spheres->list[i])->mat_ptr;
+        delete (*sc)->spheres->list[i];
+    }
+    for (int i = 0; i < (*sc)->lights->list_size; i++)
+    {
+        delete (*sc)->lights->list[i];
+    }
+    delete (*sc)->cam;
+    delete (*sc)->spheres;
+    delete (*sc)->lights;
 }
 
 int main()
 {
 
-    int spheres_ammount = 3;
-    int light_ammount = 1;
-
-    // Generate world
-    sphere **d_spheres = NULL;
-    light **d_light = NULL;
-    camera **d_camera = NULL;
-    world **d_world = NULL;
-    CHECK_CUDA_ERROR(cudaMalloc((void **)&d_world, sizeof(world)));
-    CHECK_CUDA_ERROR(cudaMalloc((void **)&d_camera, sizeof(camera)));
-    CHECK_CUDA_ERROR(cudaMalloc((void **)&d_light, light_ammount * sizeof(light)));
-    CHECK_CUDA_ERROR(cudaMalloc((void **)&d_spheres, spheres_ammount * sizeof(sphere)));
-    world_init<<<1, 1>>>(
-        d_spheres, spheres_ammount,
-        d_light, light_ammount,
-        d_world, d_camera);
-    //---- ----
-
-    // Render
-    clock_t start, end;
-    start = clock();
-    float *d_pixels = NULL;
-    float *h_pixels = (float *)malloc(CHANNELS * sizeof(float) * IMAGE_HEIGHT * IMAGE_WIDTH);
-    CHECK_CUDA_ERROR(cudaMalloc((void **)&d_pixels, CHANNELS * sizeof(float) * IMAGE_HEIGHT * IMAGE_WIDTH));
-    dim3 gridDim(IMAGE_WIDTH, IMAGE_HEIGHT);
-    dim3 blockDim(1);
-    pixel_color<<<gridDim, blockDim>>>(d_pixels, d_world);
-    CHECK_CUDA_ERROR(cudaDeviceSynchronize());
-    CHECK_CUDA_ERROR(cudaMemcpy(h_pixels, d_pixels, CHANNELS * sizeof(float) * IMAGE_HEIGHT * IMAGE_WIDTH, cudaMemcpyDeviceToHost));
-    end = clock();
-    double exec_time = double(end - start) / double(CLOCKS_PER_SEC);
-    // ---- ----
-
-    Image img(IMAGE_WIDTH, IMAGE_HEIGHT);
-    img.set_exec_time(exec_time);
-    for (int y = 0; y < IMAGE_HEIGHT; y++)
+    clock_t start, stop;
+    int image_width = 800;
+    int step = (MAX_RESOLUTION - image_width) / PICTURES_AMMOUNT;
+    int samples_number = SAMPLES_AMMOUNT;
+    for (; image_width <= 1920; image_width += step)
     {
-        for (int x = 0; x < IMAGE_WIDTH; x++)
+        int image_height = image_width / (16.0f / 9.0f);
+        int tx = 8;
+        int ty = 8;
+
+        printf("Rendering %dx%d by %d samples\n", image_width, image_height, samples_number);
+
+        int num_pixels = image_width * image_height;
+        size_t fb_size = num_pixels * sizeof(vec3);
+
+        // Pixels Allocation
+        vec3 *fb;
+        CHECK_CUDA_ERROR(cudaMallocManaged((void **)&fb, fb_size));
+
+        // World set
+        curandState *d_rand_state;
+        CHECK_CUDA_ERROR(cudaMalloc((void **)&d_rand_state, num_pixels * sizeof(curandState)));
+
+        hitable **d_spheres;
+        hitable **d_lights;
+        camera **d_camera;
+        scene **d_scene;
+        CHECK_CUDA_ERROR(cudaMalloc((void **)&d_spheres, 6 * sizeof(hitable *)));
+        CHECK_CUDA_ERROR(cudaMalloc((void **)&d_lights, 2 * sizeof(hitable *)));
+        CHECK_CUDA_ERROR(cudaMalloc((void **)&d_camera, sizeof(camera *)));
+        CHECK_CUDA_ERROR(cudaMalloc((void **)&d_scene, sizeof(scene *)));
+        create_world<<<1, 1>>>(d_spheres, d_lights, d_camera, d_scene);
+        CHECK_CUDA_ERROR(cudaGetLastError());
+        CHECK_CUDA_ERROR(cudaDeviceSynchronize());
+        // ---- ----
+
+        // Render
+        start = clock();
+        dim3 blocks(image_width / tx + 1, image_height / ty + 1);
+        dim3 threads(tx, ty);
+        render_init<<<blocks, threads>>>(image_width, image_height, d_rand_state);
+        CHECK_CUDA_ERROR(cudaGetLastError());
+        CHECK_CUDA_ERROR(cudaDeviceSynchronize());
+        render<<<blocks, threads>>>(fb, image_width, image_height, samples_number, d_scene, d_rand_state);
+        CHECK_CUDA_ERROR(cudaGetLastError());
+        CHECK_CUDA_ERROR(cudaDeviceSynchronize());
+        stop = clock();
+        double timer_seconds = ((double)(stop - start)) / CLOCKS_PER_SEC;
+        printf("Took render %lf seconds\n", timer_seconds);
+        // ---- ----
+
+        Image img(image_width, image_height);
+        img.set_exec_time(timer_seconds);
+        for (int y = image_height - 1; y >= 0; y--)
         {
-            vec3 pixel_color(
-                h_pixels[(y * IMAGE_WIDTH + x) + (RED * IMAGE_HEIGHT * IMAGE_WIDTH)],
-                h_pixels[(y * IMAGE_WIDTH + x) + (GREEN * IMAGE_HEIGHT * IMAGE_WIDTH)],
-                h_pixels[(y * IMAGE_WIDTH + x) + (BLUE * IMAGE_HEIGHT * IMAGE_WIDTH)]);
-            pixel_color = pixel_color.clamp(vec3(0.0f), vec3(1.0f));
-            RGBApixel color;
-            color.Alpha = 0.0f;
-            color.Red = pixel_color.r() * 255.0f;
-            color.Green = pixel_color.g() * 255.0f;
-            color.Blue = pixel_color.b() * 255.0f;
-            img.write_pixel(x, y, color);
+            for (int x = 0; x < image_width; x++)
+            {
+                size_t pixel_index = y * image_width + x;
+                vec3 pixel = fb[pixel_index];
+                img.write_vec3(x, y, pixel);
+            }
         }
+        img.save();
+
+        CHECK_CUDA_ERROR(cudaDeviceSynchronize());
+        free_world<<<1, 1>>>(d_scene);
+        CHECK_CUDA_ERROR(cudaGetLastError());
+        CHECK_CUDA_ERROR(cudaFree(d_spheres));
+        CHECK_CUDA_ERROR(cudaFree(d_lights));
+        CHECK_CUDA_ERROR(cudaFree(d_camera));
+        CHECK_CUDA_ERROR(cudaFree(d_scene));
+        CHECK_CUDA_ERROR(cudaFree(d_rand_state));
+        CHECK_CUDA_ERROR(cudaFree(fb));
+        CHECK_CUDA_ERROR(cudaDeviceReset());
     }
-    img.save();
 }
