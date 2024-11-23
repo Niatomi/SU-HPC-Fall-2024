@@ -80,19 +80,18 @@ __device__ vec3 color(const ray &r, scene *scene, curandState *local_rand_state,
         vec3 attenuation;
 
         hit_record light_rec;
-        float light_intensity = 0.0f;
+
+        float light_intensity = dot(SKY, SKY);
         for (int i = 0; i < scene->lights->list_size; i++)
         {
             light *l = (light *)scene->lights->list[i];
             light_intensity += l->intensity(r);
-            if (light_intensity > 1.0f)
-            {
-                light_intensity = 1.0f;
-            }
         }
 
         if (rec.mat_ptr->scatter(r, rec, attenuation, scattered, local_rand_state))
         {
+            if (light_intensity > 1.0f)
+                light_intensity = 1.0f;
             illumination *= attenuation * light_intensity;
             illumination *= color(scattered, scene, local_rand_state, depth + 1);
         }
