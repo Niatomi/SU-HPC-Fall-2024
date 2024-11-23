@@ -81,7 +81,7 @@ __device__ vec3 color(const ray &r, scene *scene, curandState *local_rand_state,
 
         hit_record light_rec;
 
-        float light_intensity = dot(SKY, SKY);
+        float light_intensity = SKY.squared_length();
         for (int i = 0; i < scene->lights->list_size; i++)
         {
             light *l = (light *)scene->lights->list[i];
@@ -170,7 +170,7 @@ __global__ void create_world(
             new metal(vec3(1.0f), 0.0));
 
         d_lights[0] = new light(vec3(1.0f, 4.0f, 0.0f));
-        d_lights[1] = new light(vec3(0.0f, 2.0f, 0.0f));
+        d_lights[1] = new light(vec3(-3.0f, -4.0f, 0.0f));
 
         *d_camera = new camera(
             vec3(-3.0f, 2.0f, 0),

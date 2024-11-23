@@ -20,7 +20,7 @@ public:
 
 __device__ float light::intensity(const ray &r) const
 {
-    return max((dot(unit_vector(r.direction()), -uv)), 0.0f);
+    return max((dot(unit_vector(r.direction()), uv)), 0.0f);
 }
 
 __device__ bool light::hit(const ray &r, float t_min, float t_max, hit_record &rec) const
